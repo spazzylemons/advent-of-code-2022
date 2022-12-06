@@ -1,0 +1,15 @@
+(defun is-all-unique (str index)
+  (cond ((= index (length str)) t)
+        ((position (char str index) str :start (1+ index)) nil)
+        (t (is-all-unique str (1+ index)))))
+
+(defun find-packet-start (line index len)
+  (let ((first-few (subseq line index (+ index len))))
+    (if (is-all-unique first-few 0)
+        (+ index len)
+        (find-packet-start line (1+ index) len))))
+
+(with-open-file (file "input")
+  (let ((line (read-line file nil)))
+    (format t "part 1: ~a~%" (find-packet-start line 0 4))
+    (format t "part 2: ~a~%" (find-packet-start line 0 14))))
