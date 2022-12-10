@@ -8,20 +8,26 @@ struct stack {
     char c;
 };
 
+static struct stack *allocated_stacks = NULL;
+
 static struct stack *push_stack(struct stack *stack, char c) {
-    struct stack *new = malloc(sizeof(struct stack));
+    struct stack *new;
+    if (allocated_stacks == NULL) {
+        new = malloc(sizeof(struct stack));
+    } else {
+        new = allocated_stacks;
+        allocated_stacks = allocated_stacks->next;
+    }
     new->next = stack;
     new->c = c;
     return new;
 }
 
 static struct stack *pop_stack(struct stack *stack, char *out) {
-    if (stack == NULL) {
-        printf("what the hell are you doing\n");
-    }
     struct stack *result = stack->next;
     *out = stack->c;
-    free(stack);
+    stack->next = allocated_stacks;
+    allocated_stacks = stack;
     return result;
 }
 
@@ -40,8 +46,17 @@ static struct stack *reverse_stack(struct stack *stack) {
 static void free_stack(struct stack *stack) {
     while (stack != NULL) {
         struct stack *next = stack->next;
-        free(stack);
+        stack->next = allocated_stacks;
+        allocated_stacks = stack;
         stack = next;
+    }
+}
+
+static void clear_all_stacks(void) {
+    while (allocated_stacks != NULL) {
+        struct stack *next = allocated_stacks->next;
+        free(allocated_stacks);
+        allocated_stacks = next;
     }
 }
 
@@ -113,4 +128,6 @@ int main(void) {
     solver(true);
     printf("part 2: ");
     solver(false);
+    clear_all_stacks();
+    return 0;
 }
