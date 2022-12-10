@@ -182,9 +182,9 @@ clear_nametable:
     stx PPUSCROLL
     stx PPUSCROLL
     ; set the initial print address, accounting for vertical overscan
-    lda #$20
-    sta address+0
     lda #$60
+    sta address+0
+    lda #$20
     sta address+1
     ; turn on screen
     lda #%00001010
