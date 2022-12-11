@@ -1,0 +1,68 @@
+(defstruct monkey items op-type op-factor divisible true-throw false-throw inspection-count)
+
+(defun parse-monkey (file)
+  (let ((line-starting-items (concatenate 'string (read-line file nil) ","))
+        (line-operation (read-line file nil))
+        (line-test (read-line file nil))
+        (line-if-true (read-line file nil))
+        (line-if-false (read-line file nil))
+        (monkey (make-monkey)))
+    ; skip unused line
+    (read-line file nil)
+    ; set inspection count
+    (setf (monkey-inspection-count monkey) 0)
+    ; parse starting items
+    (loop for i = (length "  Starting items: ") then (1+ j)
+          as j = (position #\, line-starting-items :start i)
+          while j
+          do (push (parse-integer (subseq line-starting-items i j)) (monkey-items monkey)))
+    ; parse operation
+    (setf (monkey-op-type monkey) (if (equal (char line-operation (length "  Operation: new = old ")) #\+) #'+ #'*))
+    (setf (monkey-op-factor monkey) (let ((value (subseq line-operation (length "  Operation: new = old * "))))
+                                      (if (equal value "old") nil (parse-integer value))))
+    ; parse divisible test
+    (setf (monkey-divisible monkey)
+      (parse-integer (subseq line-test (length "  Test: divisible by "))))
+    ; parse throws
+    (setf (monkey-true-throw monkey)
+      (parse-integer (subseq line-if-true (length "    If true: throw to monkey "))))
+    (setf (monkey-false-throw monkey)
+      (parse-integer (subseq line-if-false (length "    If false: throw to monkey "))))
+    monkey))
+
+(defun monkey-business (num-rounds worry-division)
+  (let ((monkeys nil) (max-worry-level 1))
+    (with-open-file (file "input")
+      (loop as line = (read-line file nil)
+            while line
+            do (let ((monkey (parse-monkey file)))
+                 (push monkey monkeys)
+                 (setf max-worry-level (* max-worry-level (monkey-divisible monkey))))))
+    (setf monkeys (nreverse monkeys))
+    ; convert to array for easier indexing
+    (let ((monkey-array (make-array (length monkeys))) (i 0))
+      (dolist (monkey monkeys)
+        (setf (aref monkey-array i) monkey)
+        (incf i))
+      (setf monkeys monkey-array))
+    (dotimes (_ num-rounds)
+      (dotimes (i (array-dimension monkeys 0))
+        (let ((monkey (aref monkeys i)))
+          (loop while (monkey-items monkey)
+                do (let* ((old-worry-level (pop (monkey-items monkey)))
+                          (other-value (or (monkey-op-factor monkey) old-worry-level))
+                          (new-worry-level (mod (floor (/ (apply (monkey-op-type monkey) (list old-worry-level other-value)) worry-division)) max-worry-level))
+                          (throw-list (if (= (mod new-worry-level (monkey-divisible monkey)) 0)
+                                          (monkey-true-throw monkey)
+                                          (monkey-false-throw monkey))))
+                     (incf (monkey-inspection-count monkey))
+                     (setf (monkey-items (aref monkeys throw-list))
+                           (push new-worry-level (monkey-items (aref monkeys throw-list)))))))))
+    (let ((inspections nil))
+      (dotimes (i (array-dimension monkeys 0))
+        (push (monkey-inspection-count (aref monkeys i)) inspections))
+      (setf inspections (sort inspections #'>))
+      (* (car inspections) (cadr inspections)))))
+
+(format t "part 1: ~a~%" (monkey-business 20 3))
+(format t "part 2: ~a~%" (monkey-business 10000 1))
