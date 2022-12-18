@@ -6,16 +6,24 @@
 
 #define TUNNEL_WIDTH 7
 
+/**
+ * Stores tunnel rows as bytes.
+ */
 struct bit_vector {
     int height;
     uint8_t *bits;
 };
 
-static uint8_t *saved_bits[100] = {};
+/**
+ * Reduce malloc() calls by partially reusing bit arrays
+ */
+#define MAX_SAVED_BITS 100
+
+static uint8_t *saved_bits[MAX_SAVED_BITS] = {};
 
 static void new_vector(struct bit_vector *vec, int height) {
     vec->height = height;
-    if (height < 100 && saved_bits[height] != NULL) {
+    if (height < MAX_SAVED_BITS && saved_bits[height] != NULL) {
         vec->bits = saved_bits[height];
         saved_bits[height] = NULL;
     } else {
@@ -25,7 +33,7 @@ static void new_vector(struct bit_vector *vec, int height) {
 }
 
 static void free_vector(struct bit_vector *vec) {
-    if (vec->height < 100 && saved_bits[vec->height] == NULL) {
+    if (vec->height < MAX_SAVED_BITS && saved_bits[vec->height] == NULL) {
         saved_bits[vec->height] = vec->bits;
     } else {
         free(vec->bits);
@@ -40,12 +48,8 @@ static bool get_bit(struct bit_vector *vec, int x, int y) {
     return (vec->bits[y] & (1 << x)) != 0;
 }
 
-static void set_bit(struct bit_vector *vec, int x, int y, bool value) {
-    if (value) {
-        vec->bits[y] |= (1 << x);
-    } else {
-        vec->bits[y] &= (1 << x);
-    }
+static void set_bit(struct bit_vector *vec, int x, int y) {
+    vec->bits[y] |= (1 << x);
 }
 
 static const bool rocks[5][4][4] = {
@@ -108,7 +112,7 @@ static int stamp_rock(int rock, int x, int y, struct bit_vector *tile_array) {
                 if (check_y + 1 > highest_point) {
                     highest_point = check_y + 1;
                 }
-                set_bit(tile_array, check_x, check_y, true);
+                set_bit(tile_array, check_x, check_y);
             }
         }
     }
@@ -147,6 +151,7 @@ static struct reachable_stack *pop_stack(struct reachable_stack *stack) {
 static int find_lowest_reachable(int highest_point, struct bit_vector *tile_array) {
     struct bit_vector visited;
     new_vector(&visited, highest_point + 1);
+    memcpy(visited.bits, tile_array->bits, highest_point + 1);
 
     int lowest_point = highest_point;
 
@@ -157,11 +162,11 @@ static int find_lowest_reachable(int highest_point, struct bit_vector *tile_arra
         int y = stack->y;
         stack = pop_stack(stack);
 
-        if (y <= highest_point && in_bounds(tile_array, x, y) && !get_bit(&visited, x, y) && !get_bit(tile_array, x, y)) {
+        if (y <= highest_point && in_bounds(tile_array, x, y) && !get_bit(&visited, x, y)) {
             if (y < lowest_point) {
                 lowest_point = y;
             }
-            set_bit(&visited, x, y, true);
+            set_bit(&visited, x, y);
             stack = push_stack(stack, x - 1, y);
             stack = push_stack(stack, x + 1, y);
             stack = push_stack(stack, x, y - 1);
@@ -179,20 +184,21 @@ static void shift_array_down(struct bit_vector *tile_array, int amount, int high
 
 #define TOTAL_TO_CHECK 1000000000000
 
-static int *get_directions(int *size, const char *filename) {
+static char *get_directions(int *size, const char *filename) {
     FILE *f = fopen(filename, "r");
     fseek(f, 0, SEEK_END);
     *size = ftell(f) - 1;
-    int *result = malloc(sizeof(int) * *size);
+    char *result = malloc(*size);
     fseek(f, 0, SEEK_SET);
+    fread(result, *size, 1, f);
+    fclose(f);
     for (int i = 0; i < *size; i++) {
-        if (fgetc(f) == '>') {
+        if (result[i] == '>') {
             result[i] = 1;
         } else {
             result[i] = -1;
         }
     }
-    fclose(f);
     return result;
 }
 
@@ -204,12 +210,25 @@ struct state_chain {
     int height;
 };
 
+static void free_seen_states(struct state_chain **seen_states, int size) {
+    for (int i = 0; i < size; i++) {
+        struct state_chain *chain = seen_states[i];
+        while (chain != NULL) {
+            struct state_chain *next = chain->next;
+            free_vector(&chain->grid);
+            free(chain);
+            chain = next;
+        }
+    }
+    free(seen_states);
+}
+
 int main(int argc, char *argv[]) {
     int num_directions;
-    int *directions = get_directions(&num_directions, argc > 1 ? argv[1] : "input");
+    char *directions = get_directions(&num_directions, argc > 1 ? argv[1] : "input");
 
     int highest_point = 0;
-    long long int accumulated_height = 0;
+    long long accumulated_height = 0;
     struct bit_vector tile_array;
 
     int direction_index = 0;
@@ -221,10 +240,8 @@ int main(int argc, char *argv[]) {
     struct state_chain **seen_states = malloc(seen_states_alloc_size);
     memset(seen_states, 0, seen_states_alloc_size);
 
-    bool waiting_for_copy = true;
-
-    long long int i = 0;
-    while (i < TOTAL_TO_CHECK) {
+    long long rock_count = 0;
+    while (rock_count++ < TOTAL_TO_CHECK) {
         int x = 2;
         int y = highest_point + 3;
         for (;;) {
@@ -238,7 +255,7 @@ int main(int argc, char *argv[]) {
 
             if (check_collision(rock_index, x, y - 1, &tile_array)) {
                 int lowest_point = find_lowest_reachable(highest_point, &tile_array);
-                accumulated_height += (long long int) lowest_point;
+                accumulated_height += (long long) lowest_point;
                 shift_array_down(&tile_array, lowest_point, highest_point);
                 highest_point -= lowest_point;
                 y -= lowest_point;
@@ -251,11 +268,11 @@ int main(int argc, char *argv[]) {
             --y;
         }
         rock_index = (rock_index + 1) % 5;
-        ++i;
 
-        if (waiting_for_copy) {
+        if (seen_states != NULL) {
             int chain_key = (5 * direction_index) + rock_index;
             struct state_chain *chain = seen_states[chain_key];
+            /* search chain for matching entry */
             while (chain != NULL) {
                 if (chain->grid.height == highest_point && !memcmp(chain->grid.bits, tile_array.bits, highest_point)) {
                     break;
@@ -263,15 +280,18 @@ int main(int argc, char *argv[]) {
                 chain = chain->next;
             }
             if (chain != NULL) {
-                long long int blocks_in_state = i - chain->blocks;
-                long long int height_in_state = accumulated_height - chain->height;
-                long long int repeat_count = (TOTAL_TO_CHECK - i) / blocks_in_state;
+                /* if an entry was found, use it to skip cycles */
+                long long blocks_in_state = rock_count - chain->blocks;
+                long long height_in_state = accumulated_height - chain->height;
+                long long repeat_count = (TOTAL_TO_CHECK - rock_count) / blocks_in_state;
                 accumulated_height += repeat_count * height_in_state;
-                i += repeat_count * blocks_in_state;
-                waiting_for_copy = false;
+                rock_count += repeat_count * blocks_in_state;
+                free_seen_states(seen_states, num_directions * 5);
+                seen_states = NULL;
             } else {
+                /* otherwise, add an entry to the chain */
                 chain = malloc(sizeof(struct state_chain));
-                chain->blocks = i;
+                chain->blocks = rock_count;
                 chain->height = accumulated_height;
                 new_vector(&chain->grid, highest_point);
                 memcpy(chain->grid.bits, tile_array.bits, highest_point);
@@ -281,8 +301,8 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    accumulated_height += (long long int) highest_point;
-    printf("result: %lld\n", accumulated_height);
+    accumulated_height += (long long) highest_point;
+    printf("%lld\n", accumulated_height);
 
     while (allocated_stacks != NULL) {
         struct reachable_stack *next = allocated_stacks->next;
@@ -290,21 +310,14 @@ int main(int argc, char *argv[]) {
         allocated_stacks = next;
     }
 
-    for (int index = 0; index < num_directions * 5; index++) {
-        struct state_chain *chain = seen_states[index];
-        while (chain != NULL) {
-            struct state_chain *next = chain->next;
-            free_vector(&chain->grid);
-            free(chain);
-            chain = next;
-        }
+    if (seen_states) {
+        free_seen_states(seen_states, num_directions * 5);
     }
-    free(seen_states);
 
     free_vector(&tile_array);
     free(directions);
 
-    for (int index = 0; index < 100; index++) {
+    for (int index = 0; index < MAX_SAVED_BITS; index++) {
         free(saved_bits[index]);
     }
 
